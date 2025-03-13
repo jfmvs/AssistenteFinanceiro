@@ -12,6 +12,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "chartjs-node-canvas": "^4.1.6",
     "dotenv": "^16.4.7",
     "googleapis": "^144.0.0",
     "node-telegram-bot-api": "^0.66.0",

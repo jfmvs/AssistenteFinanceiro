@@ -6,6 +6,7 @@ const {
   defaultChatDefinition,
   chatStoreCashFlowDefinition,
 } = require('./constants');
+const { generateChart } = require('./chartUtils');
 
 dotenv.config();
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
@@ -80,7 +81,10 @@ bot.onText(/\/sheet/, async (msg) => {
   const transactions = userState[chatId].transactions;
 
   if (!transactions || transactions?.length === 0) {
-    bot.sendMessage(chatId, 'Você não tem nenhum fluxo de caixa guardado');
+    bot.sendMessage(
+      chatId,
+      'Você não tem nenhum fluxo de caixa guardado. Digite /store para guardar'
+    );
     return;
   }
 
@@ -94,10 +98,26 @@ bot.onText(/\/sheet/, async (msg) => {
 
 bot.onText(/\/chart/, async (msg) => {
   const chatId = msg.chat.id;
+  const transactions = userState[chatId].transactions;
+
+  if (!transactions || transactions?.length === 0) {
+    bot.sendMessage(
+      chatId,
+      'Você não tem nenhum fluxo de caixa guardado. Digite /store para guardar'
+    );
+    return;
+  }
+
+  await generateChart(transactions);
+  const imageBuffer = await generateChart(transactions);
+
+  bot.sendPhoto(chatId, imageBuffer);
 });
 
 bot.onText(/\/talk/, async (msg) => {
   const chatId = msg.chat.id;
+  userState[chatId].state = 'talk';
+  bot.sendMessage(chatId, 'Pode tirar suas dúvidas');
 });
 
 bot.on('message', async (msg) => {
@@ -131,8 +151,6 @@ bot.on('message', async (msg) => {
       const transactions = jsonParsed.transacoes;
 
       userState[chatId].transactions.push(...transactions);
-
-      console.log(userState[chatId].transactions);
     }
 
     if (userState[chatId]?.state === 'link') {
@@ -141,55 +159,18 @@ bot.on('message', async (msg) => {
       return;
     }
 
-    // if (userState[chatId]?.state === 'writeOnSheet') {
-    //   const transactions = userState[chatId].transactions;
-    //   if (transactions?.length === 0) {
-    //     bot.sendMessage(chatId, 'Você não tem nenhum fluxo de caixa guardado');
-    //     return;
-    //   }
-    //   writeOnSheet(
-    //     userState[chatId].transactions,
-    //     userState[chatId].spreadsheetId,
-    //     bot,
-    //     chatId
-    //   );
-    // }
+    if (userState[chatId]?.state === 'talk') {
+      const intentResponse = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: defaultChatDefinition },
+          { role: 'user', content: userMessage },
+        ],
+      });
 
-    // const intentResponse = await openai.chat.completions.create({
-    //   model: 'gpt-4o-mini',
-    //   messages: [
-    //     { role: 'system', content: defaultChatDefinition },
-    //     { role: 'user', content: userMessage },
-    //   ],
-    // });
-
-    // try {
-    //   const parsedIntent = JSON.parse(
-    //     intentResponse.choices[0]?.message?.content
-    //       ?.trim()
-    //       .toLowerCase()
-    //       .replace(/'/g, '"')
-    //   );
-
-    //   if (Array.isArray(parsedIntent)) {
-    //     for (const entry of parsedIntent) {
-    //       await addRowToSheet(userState[chatId].spreadsheetId, entry);
-    //     }
-    //     bot.sendMessage(
-    //       chatId,
-    //       'Todas as informações foram cadastradas. Como mais posso ajudar?'
-    //     );
-    //   } else {
-    //     await addRowToSheet(userState[chatId].spreadsheetId, parsedIntent);
-    //     bot.sendMessage(
-    //       chatId,
-    //       'Informação cadastrada. Como mais posso ajudar?'
-    //     );
-    //   }
-    // } catch (error) {
-    //   bot.sendMessage(chatId, intent);
-    //   return;
-    // }
+      bot.sendMessage(chatId, intentResponse.choices[0]?.message?.content);
+      bot.sendMessage(chatId, 'Você tem mais alguma duvida?');
+    }
   } catch (error) {
     console.log(error);
     bot.sendMessage(chatId, 'Ocorreu um erro ao processar sua solicitação.');

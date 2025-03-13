@@ -198,7 +198,7 @@ async function postLinkSheet(userState, msg, bot) {
         await createSheetTab(spreadsheetId);
         bot.sendMessage(
           chatId,
-          "Link da planilha recebido com sucesso! A aba 'Controle Financeiro' foi criada. Como posso ajudar você com ela?"
+          'Link da planilha recebido com sucesso! Para começar a guardar suas transações digite /store'
         );
       } catch (error) {
         bot.sendMessage(
