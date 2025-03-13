@@ -1,8 +1,11 @@
 const TelegramBot = require('node-telegram-bot-api');
 const OpenAi = require('openai');
 const dotenv = require('dotenv');
-const { createSheetTab, addRowToSheet } = require('./sheetsUtils');
-const { chatDefinition } = require('./constants');
+const { postLinkSheet, writeOnSheet } = require('./sheetsUtils');
+const {
+  defaultChatDefinition,
+  chatStoreCashFlowDefinition,
+} = require('./constants');
 
 dotenv.config();
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
@@ -11,107 +14,184 @@ const openai = new OpenAi({ apiKey: process.env.OPENAI_API_KEY || '' });
 
 const userState = {};
 
+bot.setMyCommands([
+  { command: 'store', description: 'Guardar seu fluxo de caixa' },
+  { command: 'link', description: 'Adicionar link da planilha' },
+  { command: 'talk', description: 'Fale com o bot sobre suas finaças' },
+  {
+    command: 'chart',
+    description: 'Crie gráficos com base nas suas finanças',
+  },
+  { command: 'help', description: 'Para ver todos os comandos' },
+  { command: 'sheet', description: 'Adicionar o fluxo na sua planilha' },
+]);
+
+async function showOptions(chatId) {
+  const commands = await bot.getMyCommands();
+
+  const commandsList = commands
+    .map((cmd) => `/${cmd.command} - ${cmd.description}`)
+    .join('\n');
+
+  bot.sendMessage(
+    chatId,
+    'Caso você não tenha escolhido nenhum ele está no estado de /store'
+  );
+  bot.sendMessage(
+    chatId,
+    `Aqui estão os comandos disponíveis:\n\n${commandsList}`
+  );
+}
+
+bot.onText(/\/help/, async (msg) => {
+  const chatId = msg.chat.id;
+  showOptions(chatId);
+});
+
+bot.onText(/\/link/, async (msg) => {
+  const chatId = msg.chat.id;
+
+  if (!userState[chatId]?.sheetLink) {
+    userState[chatId].state = 'link';
+
+    bot.sendMessage(
+      chatId,
+      'Por favor, envie o link de uma planilha do Google Sheets com permissão para edição.'
+    );
+  } else {
+    bot.sendMessage(
+      chatId,
+      `Você já possui um link de planilha cadastrado: ${userState[chatId].sheetLink}`,
+      { disable_web_page_preview: true }
+    );
+  }
+});
+
+bot.onText(/\/store/, async (msg) => {
+  const chatId = msg.chat.id;
+
+  userState[chatId].state = 'store';
+
+  bot.sendMessage(chatId, 'Digite seu fluxo de caixa');
+});
+
+bot.onText(/\/sheet/, async (msg) => {
+  const chatId = msg.chat.id;
+  const transactions = userState[chatId].transactions;
+
+  if (!transactions || transactions?.length === 0) {
+    bot.sendMessage(chatId, 'Você não tem nenhum fluxo de caixa guardado');
+    return;
+  }
+
+  writeOnSheet(
+    userState[chatId].transactions,
+    userState[chatId].spreadsheetId,
+    bot,
+    chatId
+  );
+});
+
+bot.onText(/\/chart/, async (msg) => {
+  const chatId = msg.chat.id;
+});
+
+bot.onText(/\/talk/, async (msg) => {
+  const chatId = msg.chat.id;
+});
+
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const userMessage = msg.text;
 
-  if (!userMessage) return;
-
-  if (!userState[chatId]?.sheetLink) {
-    // Verifica se a mensagem é um link válido do Google Sheets
-    const sheetLinkPattern =
-      /^https:\/\/docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/;
-    const match = userMessage.match(sheetLinkPattern);
-
-    if (match) {
-      const spreadsheetId = match[1]; // Extrai o ID da planilha do link
-      userState[chatId] = { sheetLink: userMessage, spreadsheetId };
-
-      // Cria a aba "Controle Financeiro"
-      try {
-        // Tenta criar a aba e armazena o retorno
-        await createSheetTab(spreadsheetId);
-
-        // Se chegou aqui, a aba foi criada com sucesso (nenhum erro foi lançado)
-        bot.sendMessage(
-          chatId,
-          "Link da planilha recebido com sucesso! A aba 'Controle Financeiro' foi criada. Como posso ajudar você com ela?"
-        );
-      } catch (error) {
-        // Caso ocorra um erro, ele será tratado aqui
-        console.error('Erro ao criar a aba:', error.message);
-        bot.sendMessage(
-          chatId,
-          `Ocorreu um erro durante o processo: ${error.message}`
-        );
-      }
-    } else {
-      bot.sendMessage(
-        chatId,
-        'Por favor, envie o link de uma planilha do Google Sheets com permissão para edição.'
-      );
-    }
-    return;
+  if (!userState[chatId]) {
+    userState[chatId] = {
+      state: 'store',
+      transactions: [],
+    };
   }
 
+  if (!userMessage || userMessage.startsWith('/')) return;
+
   try {
-    const intentResponse = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: chatDefinition },
-        { role: 'user', content: userMessage },
-      ],
-    });
+    if (userState[chatId]?.state === 'store') {
+      const intentResponse = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: chatStoreCashFlowDefinition },
+          { role: 'user', content: userMessage },
+        ],
+        response_format: { type: 'json_object' },
+      });
 
-    let intent = intentResponse.choices[0]?.message?.content
-      ?.trim()
-      .toLowerCase();
+      const jsonParsed = JSON.parse(
+        intentResponse.choices[0]?.message?.content
+      );
 
-    if (intent === 'link') {
-      bot.sendMessage(
-        chatId,
-        `Aqui está o link da sua planilha: ${userState[chatId].sheetLink}`
-      );
-      return;
-    } else if (intent === 'renovar') {
-      delete userState[chatId];
-      bot.sendMessage(
-        chatId,
-        'Por favor, envie o link de uma planilha do Google Sheets com permissão para edição.'
-      );
+      const transactions = jsonParsed.transacoes;
+
+      userState[chatId].transactions.push(...transactions);
+
+      console.log(userState[chatId].transactions);
+    }
+
+    if (userState[chatId]?.state === 'link') {
+      postLinkSheet(userState, msg, bot);
+      userState[chatId].state = '';
       return;
     }
 
-    intent = intent.replace(/'/g, '"');
+    // if (userState[chatId]?.state === 'writeOnSheet') {
+    //   const transactions = userState[chatId].transactions;
+    //   if (transactions?.length === 0) {
+    //     bot.sendMessage(chatId, 'Você não tem nenhum fluxo de caixa guardado');
+    //     return;
+    //   }
+    //   writeOnSheet(
+    //     userState[chatId].transactions,
+    //     userState[chatId].spreadsheetId,
+    //     bot,
+    //     chatId
+    //   );
+    // }
 
-    let parsedIntent;
-    try {
-      parsedIntent = JSON.parse(intent); // Tenta interpretar como JSON
+    // const intentResponse = await openai.chat.completions.create({
+    //   model: 'gpt-4o-mini',
+    //   messages: [
+    //     { role: 'system', content: defaultChatDefinition },
+    //     { role: 'user', content: userMessage },
+    //   ],
+    // });
 
-      if (Array.isArray(parsedIntent)) {
-        // Caso o intent seja uma lista de objetos
-        for (const entry of parsedIntent) {
-          await addRowToSheet(userState[chatId].spreadsheetId, entry); // Adiciona cada item da lista
-        }
-        bot.sendMessage(
-          chatId,
-          'Todas as informações foram cadastradas. Como mais posso ajudar?'
-        );
-      } else {
-        // Caso o intent seja um único objeto
-        await addRowToSheet(userState[chatId].spreadsheetId, parsedIntent);
-        bot.sendMessage(
-          chatId,
-          'Informação cadastrada. Como mais posso ajudar?'
-        );
-      }
-    } catch (error) {
-      // Caso não seja JSON, responde normalmente
-      bot.sendMessage(chatId, intent); // Envia a resposta normal da LLM para o usuário
-      return;
-    }
+    // try {
+    //   const parsedIntent = JSON.parse(
+    //     intentResponse.choices[0]?.message?.content
+    //       ?.trim()
+    //       .toLowerCase()
+    //       .replace(/'/g, '"')
+    //   );
+
+    //   if (Array.isArray(parsedIntent)) {
+    //     for (const entry of parsedIntent) {
+    //       await addRowToSheet(userState[chatId].spreadsheetId, entry);
+    //     }
+    //     bot.sendMessage(
+    //       chatId,
+    //       'Todas as informações foram cadastradas. Como mais posso ajudar?'
+    //     );
+    //   } else {
+    //     await addRowToSheet(userState[chatId].spreadsheetId, parsedIntent);
+    //     bot.sendMessage(
+    //       chatId,
+    //       'Informação cadastrada. Como mais posso ajudar?'
+    //     );
+    //   }
+    // } catch (error) {
+    //   bot.sendMessage(chatId, intent);
+    //   return;
+    // }
   } catch (error) {
-    console.error('Erro:', error);
+    console.log(error);
     bot.sendMessage(chatId, 'Ocorreu um erro ao processar sua solicitação.');
   }
 });
