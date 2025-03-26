@@ -88,7 +88,7 @@ bot.onText(/\/sheet/, async (msg) => {
     return;
   }
 
-  if (userState[chatId]?.sheetLink) {
+  if (!userState[chatId]?.sheetLink) {
     bot.sendMessage(
       chatId,
       'Você não tem link cadastrado. Digite /link para cadastrar'
