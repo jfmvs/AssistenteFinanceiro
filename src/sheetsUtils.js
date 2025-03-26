@@ -198,7 +198,7 @@ async function postLinkSheet(userState, msg, bot) {
         await createSheetTab(spreadsheetId);
         bot.sendMessage(
           chatId,
-          'Link da planilha recebido com sucesso! Para começar a guardar suas transações digite /store'
+          'Link da planilha recebido com sucesso! Para começar a guardar suas transações digite /store. Ou se ja quiser exportar para planilha digite /sheet'
         );
       } catch (error) {
         bot.sendMessage(
